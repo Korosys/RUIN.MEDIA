@@ -33,10 +33,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Image processing
                 if ($_POST['extreme_quality'] == '1') {
                     // Extreme quality reduction for images
-                    $cmd = "ffmpeg -i ".escapeshellarg($inputFile)." -q:v 0.25 ".escapeshellarg($outputFile)." -y 2>&1";
+                    $cmd = "ffmpeg -i ".escapeshellarg($inputFile)." -vf 'scale=iw/32:-1,scale=iw*8:-1:flags=neighbor,noise=alls=20:allf=t' -q:v 2 ".escapeshellarg($outputFile)." -y 2>&1";
                 } else {
                     // Standard quality reduction for images
-                    $cmd = "ffmpeg -i ".escapeshellarg($inputFile)." -q:v 0.5 ".escapeshellarg($outputFile)." -y 2>&1";
+                    $cmd = "ffmpeg -i ".escapeshellarg($inputFile)." -vf 'scale=iw/16:-1,scale=iw*8:-1:flags=neighbor,noise=alls=20:allf=t' -q:v 2 ".escapeshellarg($outputFile)." -y 2>&1";
                 }
             } else {
                 // Audio processing
