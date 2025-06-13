@@ -439,7 +439,7 @@ function getUploadErrorMessage($errorCode) {
                 </div>
                 
                 <div class="info-message">
-                    <strong>NOTE:</strong> Max filesize: 50MB. Only audio and image files are allowed. Files are deleted after 5 minutes.
+                    <strong>NOTE:</strong> Max filesize: 50MB. Files are deleted after 5 minutes.
                 </div>
                 
                 <button type="submit" class="function-button">

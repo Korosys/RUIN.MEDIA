@@ -1,6 +1,6 @@
 <?php
 // Cleanup script to delete files older than 5 minutes
-$uploadDir = '/config/www/uploads/';
+$uploadDir = '/var/www/html/uploads/';
 
 // Create uploads directory if it doesn't exist
 if (!file_exists($uploadDir)) {
