@@ -20,94 +20,113 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $originalName = $_FILES['audio_file']['name'];
         $fileExt = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
         $baseName = pathinfo($originalName, PATHINFO_FILENAME);
-        $isImage = in_array($fileExt, ['jpg', 'jpeg', 'png', 'gif', 'bmp']);
         
-        // Generate files with sanitized names
-        $inputFile = $uploadDir . uniqid('input_') . '_' . preg_replace('/[^A-Za-z0-9\._\-]/', '_', $originalName);
-        $outputFile = $isImage
-            ? $uploadDir . uniqid('output_') . '.jpg'
-            : $uploadDir . uniqid('output_') . '.mp3';
+        // Define allowed file extensions
+        $allowedImageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'tiff', 'tif'];
+        $allowedAudioExts = ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac', 'wma', 'opus', 'aiff', 'au'];
+        $allowedExts = array_merge($allowedImageExts, $allowedAudioExts);
         
-        // Save uploaded file
-        if (move_uploaded_file($_FILES['audio_file']['tmp_name'], $inputFile)) {
-            if ($isImage) {
-                // Image processing
-                if ($_POST['extreme_quality'] == '1') {
-                    // Extreme quality reduction for images
-                    $cmd = "ffmpeg -i ".escapeshellarg($inputFile)." -vf 'scale=iw/32:-1,scale=iw*8:-1:flags=neighbor,noise=alls=20:allf=t' -q:v 2 ".escapeshellarg($outputFile)." -y 2>&1";
-                } else {
-                    // Standard quality reduction for images
-                    $cmd = "ffmpeg -i ".escapeshellarg($inputFile)." -vf 'scale=iw/16:-1,scale=iw*8:-1:flags=neighbor,noise=alls=20:allf=t' -q:v 2 ".escapeshellarg($outputFile)." -y 2>&1";
-                }
-            } else {
-                // Audio processing
-                // Detect audio channels
-                $channelCmd = "ffprobe -i ".escapeshellarg($inputFile)." -show_entries stream=channels -of compact=p=0:nk=1 -v 0 2>&1";
-                $channels = trim(shell_exec($channelCmd));
-            
-            if (!is_numeric($channels) || $channels < 1) {
-                $channels = 1; // Default to mono if detection fails
-            }
-            
-            // Build command based on quality toggle
-                if (!is_numeric($channels) || $channels < 1) {
-                    $channels = 1; // Default to mono if detection fails
-                }
-                
-                // Build command based on quality toggle
-                if ($_POST['extreme_quality'] == '1') {
-                    $cmd = "ffmpeg -i ".escapeshellarg($inputFile)." -vn ";
-                    $cmd .= "-filter_complex \"";
-
-                    if ($channels > 1) {
-                        // Stereo processing
-                        $cmd .= "channelsplit [left][right]; ";
-                        $cmd .= "[left] aresample=8000, aphaser=in_gain=0.9:out_gain=1:speed=2, acompressor=level_in=24:threshold=0.1:ratio=9, bandpass=f=1500, volume=6dB [left_processed]; ";
-                        $cmd .= "[right] aresample=8000, aphaser=in_gain=0.9:out_gain=1:speed=2, acompressor=level_in=24:threshold=0.1:ratio=9, bandpass=f=1500, volume=6dB [right_processed]; ";
-                        $cmd .= "[left_processed][right_processed] amix=inputs=2";
-                    } else {
-                        // Mono processing
-                        $cmd .= "aresample=8000, aphaser=in_gain=0.9:out_gain=1:speed=2, acompressor=level_in=24:threshold=0.1:ratio=9, bandpass=f=1500, volume=6dB";
-                    }
-
-                    $cmd .= "\" ";
-                    $cmd .= "-ar 8000 -b:a 8k ".escapeshellarg($outputFile)." -y 2>&1";
-                } else {
-                    // Standard quality reduction
-                    $cmd = "ffmpeg -i ".escapeshellarg($inputFile)." -vn -ac 1 -ar 8000 -b:a 16k ".escapeshellarg($outputFile)." -y 2>&1";
-                }
-            }
-            
-            // Execute FFmpeg command
-            $commandOutput = [];
-            $returnCode = 0;
-            exec($cmd, $commandOutput, $returnCode);
-            
-            if ($returnCode === 0 && file_exists($outputFile)) {
-                // Prepare download filename with appropriate suffix and extension
-                $suffix = ($_POST['extreme_quality'] == '1') ? '_bitcrushed_extreme' : '_bitcrushed';
-                $downloadExt = $isImage ? '.jpg' : '.mp3';
-                $downloadFilename = $baseName . $suffix . $downloadExt;
-                
-                // Debug: Log the actual extreme_quality value
-                error_log("extreme_quality value: " . $_POST['extreme_quality']);
-                error_log("Generated suffix: " . $suffix);
-                
-                // Clean and sanitize filename
-                $safeFilename = preg_replace("/[^A-Za-z0-9\._-]/", '_', $downloadFilename);
-                
-                // Store processed file info for preview
-                $previewFile = basename($outputFile);
-                $downloadLink = '/' . $uploadDir . $previewFile; // Make path absolute
-                
-                // Delete input file only (keep output for preview)
-                unlink($inputFile);
-            } else {
-                $ffmpegError = $commandOutput ? implode("<br>", array_slice($commandOutput, -10)) : 'No output';
-                $error = "Processing failed. FFmpeg error: " . htmlspecialchars($ffmpegError);
-            }
+        // Validate file extension
+        if (!in_array($fileExt, $allowedExts)) {
+            $error = "Invalid file type. Only audio files (" . implode(', ', $allowedAudioExts) . ") and image files (" . implode(', ', $allowedImageExts) . ") are allowed.";
         } else {
-            $error = "Failed to move uploaded file";
+            // Additional MIME type validation for security
+            $finfo = finfo_open(FILEINFO_MIME_TYPE);
+            $mimeType = finfo_file($finfo, $_FILES['audio_file']['tmp_name']);
+            finfo_close($finfo);
+            
+            $allowedImageMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/bmp', 'image/webp', 'image/svg+xml', 'image/tiff'];
+            $allowedAudioMimes = ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/flac', 'audio/mp4', 'audio/aac', 'audio/x-ms-wma', 'audio/opus', 'audio/aiff', 'audio/basic'];
+            $allowedMimes = array_merge($allowedImageMimes, $allowedAudioMimes);
+            
+            if (!in_array($mimeType, $allowedMimes)) {
+                $error = "Invalid file type detected. The file does not appear to be a valid audio or image file.";
+            } else {
+                $isImage = in_array($fileExt, $allowedImageExts);
+                
+                // Generate files with sanitized names
+                $inputFile = $uploadDir . uniqid('input_') . '_' . preg_replace('/[^A-Za-z0-9\._\-]/', '_', $originalName);
+                $outputFile = $isImage
+                    ? $uploadDir . uniqid('output_') . '.jpg'
+                    : $uploadDir . uniqid('output_') . '.mp3';
+                
+                // Save uploaded file
+                if (move_uploaded_file($_FILES['audio_file']['tmp_name'], $inputFile)) {
+                    if ($isImage) {
+                        // Image processing
+                        if ($_POST['extreme_quality'] == '1') {
+                            // Extreme quality reduction for images
+                            $cmd = "ffmpeg -i ".escapeshellarg($inputFile)." -vf 'scale=iw/32:-1,scale=iw*8:-1:flags=neighbor,noise=alls=20:allf=t' -q:v 2 ".escapeshellarg($outputFile)." -y 2>&1";
+                        } else {
+                            // Standard quality reduction for images
+                            $cmd = "ffmpeg -i ".escapeshellarg($inputFile)." -vf 'scale=iw/16:-1,scale=iw*8:-1:flags=neighbor,noise=alls=20:allf=t' -q:v 2 ".escapeshellarg($outputFile)." -y 2>&1";
+                        }
+                    } else {
+                        // Audio processing
+                        // Detect audio channels
+                        $channelCmd = "ffprobe -i ".escapeshellarg($inputFile)." -show_entries stream=channels -of compact=p=0:nk=1 -v 0 2>&1";
+                        $channels = trim(shell_exec($channelCmd));
+                    
+                        if (!is_numeric($channels) || $channels < 1) {
+                            $channels = 1; // Default to mono if detection fails
+                        }
+                        
+                        // Build command based on quality toggle
+                        if ($_POST['extreme_quality'] == '1') {
+                            $cmd = "ffmpeg -i ".escapeshellarg($inputFile)." -vn ";
+                            $cmd .= "-filter_complex \"";
+
+                            if ($channels > 1) {
+                                // Stereo processing
+                                $cmd .= "channelsplit [left][right]; ";
+                                $cmd .= "[left] aresample=8000, aphaser=in_gain=0.9:out_gain=1:speed=2, acompressor=level_in=24:threshold=0.1:ratio=9, bandpass=f=1500, volume=6dB [left_processed]; ";
+                                $cmd .= "[right] aresample=8000, aphaser=in_gain=0.9:out_gain=1:speed=2, acompressor=level_in=24:threshold=0.1:ratio=9, bandpass=f=1500, volume=6dB [right_processed]; ";
+                                $cmd .= "[left_processed][right_processed] amix=inputs=2";
+                            } else {
+                                // Mono processing
+                                $cmd .= "aresample=8000, aphaser=in_gain=0.9:out_gain=1:speed=2, acompressor=level_in=24:threshold=0.1:ratio=9, bandpass=f=1500, volume=6dB";
+                            }
+
+                            $cmd .= "\" ";
+                            $cmd .= "-ar 8000 -b:a 8k ".escapeshellarg($outputFile)." -y 2>&1";
+                        } else {
+                            // Standard quality reduction
+                            $cmd = "ffmpeg -i ".escapeshellarg($inputFile)." -vn -ac 1 -ar 8000 -b:a 16k ".escapeshellarg($outputFile)." -y 2>&1";
+                        }
+                    }
+                    
+                    // Execute FFmpeg command
+                    $commandOutput = [];
+                    $returnCode = 0;
+                    exec($cmd, $commandOutput, $returnCode);
+                    
+                    if ($returnCode === 0 && file_exists($outputFile)) {
+                        // Prepare download filename with appropriate suffix and extension
+                        $suffix = ($_POST['extreme_quality'] == '1') ? '_bitcrushed_extreme' : '_bitcrushed';
+                        $downloadExt = $isImage ? '.jpg' : '.mp3';
+                        $downloadFilename = $baseName . $suffix . $downloadExt;
+                        
+                        // Debug: Log the actual extreme_quality value
+                        error_log("extreme_quality value: " . $_POST['extreme_quality']);
+                        error_log("Generated suffix: " . $suffix);
+                        
+                        // Clean and sanitize filename
+                        $safeFilename = preg_replace("/[^A-Za-z0-9\._-]/", '_', $downloadFilename);
+                        
+                        // Store processed file info for preview
+                        $previewFile = basename($outputFile);
+                        $downloadLink = '/' . $uploadDir . $previewFile; // Make path absolute
+                        
+                        // Delete input file only (keep output for preview)
+                        unlink($inputFile);
+                    } else {
+                        $ffmpegError = $commandOutput ? implode("<br>", array_slice($commandOutput, -10)) : 'No output';
+                        $error = "Processing failed. FFmpeg error: " . htmlspecialchars($ffmpegError);
+                    }
+                } else {
+                    $error = "Failed to move uploaded file";
+                }
+            }
         }
     } else {
         $error = isset($_FILES['audio_file']) ? 
@@ -420,7 +439,7 @@ function getUploadErrorMessage($errorCode) {
                 </div>
                 
                 <div class="info-message">
-                    <strong>NOTE:</strong> Files are deleted after 5 minutes.
+                    <strong>NOTE:</strong> Max filesize: 50MB. Only audio and image files are allowed. Files are deleted after 5 minutes.
                 </div>
                 
                 <button type="submit" class="function-button">
