@@ -1,6 +1,7 @@
 <?php
 // Create uploads directory if missing
 $uploadDir = 'uploads/';
+$previewFile = ''; // Initialize preview file variable
 if (!is_dir($uploadDir)) {
     if (!@mkdir($uploadDir, 0755, true)) {
         die("Failed to create upload directory. Please check permissions.");
@@ -95,20 +96,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Clean and sanitize filename
                 $safeFilename = preg_replace("/[^A-Za-z0-9\._-]/", '_', $downloadFilename);
                 
-                // Force download of processed file
-                header('Content-Type: '.($isImage ? 'image/jpeg' : 'audio/mpeg'));
-                header('Content-Description: File Transfer');
-                header('Content-Disposition: attachment; filename="' . $safeFilename . '"');
-                header('Expires: 0');
-                header('Cache-Control: must-revalidate');
-                header('Pragma: public');
-                header('Content-Length: ' . filesize($outputFile));
-                readfile($outputFile);
+                // Store processed file info for preview
+                $previewFile = basename($outputFile);
+                $downloadLink = '/' . $uploadDir . $previewFile; // Make path absolute
                 
-                // Cleanup
+                // Delete input file only (keep output for preview)
                 unlink($inputFile);
-                unlink($outputFile);
-                exit;
             } else {
                 $ffmpegError = $commandOutput ? implode("<br>", array_slice($commandOutput, -10)) : 'No output';
                 $error = "Processing failed. FFmpeg error: " . htmlspecialchars($ffmpegError);
@@ -333,7 +326,7 @@ function getUploadErrorMessage($errorCode) {
         
         @keyframes shine {
             0% {
-                left: -100%;
+                left: -200%;
             }
             100% {
                 left: 150%;
@@ -400,7 +393,7 @@ function getUploadErrorMessage($errorCode) {
             
             <form method="POST" enctype="multipart/form-data" id="bitcrusher-form">
                 <div class="file-upload-container" id="drop-area">
-                    <div class="gore-icon">🔊⚡</div>
+                    <div class="gore-icon">🔊🖻</div>
                     <span class="file-upload-label">SELECT OR DRAG A FILE TO RUIN</span>
                     <input type="file" name="audio_file" id="audio-file" accept="audio/*,image/*" required>
                 </div>
@@ -427,13 +420,32 @@ function getUploadErrorMessage($errorCode) {
                 </div>
                 
                 <div class="info-message">
-                    <strong>NOTE:</strong> Output will be an MP3 (audio) or JPG (image) file with "_bitcrushed" added to the original filename
+                    <strong>NOTE:</strong> Files are deleted after 5 minutes.
                 </div>
                 
                 <button type="submit" class="function-button">
                     RUIN ME
                 </button>
             </form>
+            
+            <?php if (!empty($previewFile)): ?>
+                <div class="preview-container" style="margin-top: 30px; text-align: center;">
+                    <h3>Preview:</h3>
+                    <?php if ($isImage): ?>
+                        <img src="<?= $downloadLink ?>" alt="Processed Image" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.2);">
+                    <?php else: ?>
+                        <audio controls style="width: 100%;">
+                            <source src="<?= $downloadLink ?>" type="audio/mpeg">
+                            Your browser does not support the audio element.
+                        </audio>
+                    <?php endif; ?>
+                    <p>
+                        <a href="<?= $downloadLink ?>" download="<?= $safeFilename ?>" class="function-button" style="display: inline-block; width: auto; padding: 10px 20px; margin-top: 15px;">
+                            Download
+                        </a>
+                    </p>
+                </div>
+            <?php endif; ?>
         </div>
     </div>
     
