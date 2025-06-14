@@ -12,6 +12,13 @@ RUIN.MEDIA is a Docker-based PHP application for reducing the quality of images 
 ## Quick Start
 1. Docker Compose:
    ```
-   docker-compose up -d
+   ---
+   services:
+     ruin.media:
+       image: ghcr.io/korosys/ruin.media:main
+       container_name: "ruin.media"
+       ports:
+         - "8080:80"
+       restart: unless-stopped
    ```
 3. Access the application at: `http://localhost:8080`
