@@ -1,153 +1,3 @@
-<?php
-// Create uploads directory if missing
-$uploadDir = 'uploads/';
-$previewFile = ''; // Initialize preview file variable
-if (!is_dir($uploadDir)) {
-    if (!@mkdir($uploadDir, 0755, true)) {
-        die("Failed to create upload directory. Please check permissions.");
-    }
-}
-
-// Check directory permissions
-if (!is_writable($uploadDir)) {
-    die("Upload directory is not writable");
-}
-
-// Process form submission
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_FILES['audio_file']) && $_FILES['audio_file']['error'] === UPLOAD_ERR_OK) {
-        // Get original filename and extension
-        $originalName = $_FILES['audio_file']['name'];
-        $fileExt = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
-        $baseName = pathinfo($originalName, PATHINFO_FILENAME);
-        
-        // Define allowed file extensions
-        $allowedImageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'tiff', 'tif'];
-        $allowedAudioExts = ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac', 'wma', 'opus', 'aiff', 'au'];
-        $allowedExts = array_merge($allowedImageExts, $allowedAudioExts);
-        
-        // Validate file extension
-        if (!in_array($fileExt, $allowedExts)) {
-            $error = "Invalid file type. Only audio files (" . implode(', ', $allowedAudioExts) . ") and image files (" . implode(', ', $allowedImageExts) . ") are allowed.";
-        } else {
-            // Additional MIME type validation for security
-            $finfo = finfo_open(FILEINFO_MIME_TYPE);
-            $mimeType = finfo_file($finfo, $_FILES['audio_file']['tmp_name']);
-            finfo_close($finfo);
-            
-            $allowedImageMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/bmp', 'image/webp', 'image/svg+xml', 'image/tiff'];
-            $allowedAudioMimes = ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/flac', 'audio/mp4', 'audio/aac', 'audio/x-ms-wma', 'audio/opus', 'audio/aiff', 'audio/basic'];
-            $allowedMimes = array_merge($allowedImageMimes, $allowedAudioMimes);
-            
-            if (!in_array($mimeType, $allowedMimes)) {
-                $error = "Invalid file type detected. The file does not appear to be a valid audio or image file.";
-            } else {
-                $isImage = in_array($fileExt, $allowedImageExts);
-                
-                // Generate files with sanitized names
-                $inputFile = $uploadDir . uniqid('input_') . '_' . preg_replace('/[^A-Za-z0-9\._\-]/', '_', $originalName);
-                $outputFile = $isImage
-                    ? $uploadDir . uniqid('output_') . '.jpg'
-                    : $uploadDir . uniqid('output_') . '.mp3';
-                
-                // Save uploaded file
-                if (move_uploaded_file($_FILES['audio_file']['tmp_name'], $inputFile)) {
-                    if ($isImage) {
-                        // Image processing
-                        if ($_POST['extreme_quality'] == '1') {
-                            // Extreme quality reduction for images
-                            $cmd = "ffmpeg -i ".escapeshellarg($inputFile)." -vf 'scale=iw/32:-1,scale=iw*8:-1:flags=neighbor,noise=alls=20:allf=t' -q:v 2 ".escapeshellarg($outputFile)." -y 2>&1";
-                        } else {
-                            // Standard quality reduction for images
-                            $cmd = "ffmpeg -i ".escapeshellarg($inputFile)." -vf 'scale=iw/16:-1,scale=iw*8:-1:flags=neighbor,noise=alls=20:allf=t' -q:v 2 ".escapeshellarg($outputFile)." -y 2>&1";
-                        }
-                    } else {
-                        // Audio processing
-                        // Detect audio channels
-                        $channelCmd = "ffprobe -i ".escapeshellarg($inputFile)." -show_entries stream=channels -of compact=p=0:nk=1 -v 0 2>&1";
-                        $channels = trim(shell_exec($channelCmd));
-                    
-                        if (!is_numeric($channels) || $channels < 1) {
-                            $channels = 1; // Default to mono if detection fails
-                        }
-                        
-                        // Build command based on quality toggle
-                        if ($_POST['extreme_quality'] == '1') {
-                            $cmd = "ffmpeg -i ".escapeshellarg($inputFile)." -vn ";
-                            $cmd .= "-filter_complex \"";
-
-                            if ($channels > 1) {
-                                // Stereo processing
-                                $cmd .= "channelsplit [left][right]; ";
-                                $cmd .= "[left] aresample=8000, aphaser=in_gain=0.9:out_gain=1:speed=2, acompressor=level_in=24:threshold=0.1:ratio=9, bandpass=f=1500, volume=6dB [left_processed]; ";
-                                $cmd .= "[right] aresample=8000, aphaser=in_gain=0.9:out_gain=1:speed=2, acompressor=level_in=24:threshold=0.1:ratio=9, bandpass=f=1500, volume=6dB [right_processed]; ";
-                                $cmd .= "[left_processed][right_processed] amix=inputs=2";
-                            } else {
-                                // Mono processing
-                                $cmd .= "aresample=8000, aphaser=in_gain=0.9:out_gain=1:speed=2, acompressor=level_in=24:threshold=0.1:ratio=9, bandpass=f=1500, volume=6dB";
-                            }
-
-                            $cmd .= "\" ";
-                            $cmd .= "-ar 8000 -b:a 8k ".escapeshellarg($outputFile)." -y 2>&1";
-                        } else {
-                            // Standard quality reduction
-                            $cmd = "ffmpeg -i ".escapeshellarg($inputFile)." -vn -ac 1 -ar 8000 -b:a 16k ".escapeshellarg($outputFile)." -y 2>&1";
-                        }
-                    }
-                    
-                    // Execute FFmpeg command
-                    $commandOutput = [];
-                    $returnCode = 0;
-                    exec($cmd, $commandOutput, $returnCode);
-                    
-                    if ($returnCode === 0 && file_exists($outputFile)) {
-                        // Prepare download filename with appropriate suffix and extension
-                        $suffix = ($_POST['extreme_quality'] == '1') ? '_bitcrushed_extreme' : '_bitcrushed';
-                        $downloadExt = $isImage ? '.jpg' : '.mp3';
-                        $downloadFilename = $baseName . $suffix . $downloadExt;
-                        
-                        // Debug: Log the actual extreme_quality value
-                        error_log("extreme_quality value: " . $_POST['extreme_quality']);
-                        error_log("Generated suffix: " . $suffix);
-                        
-                        // Clean and sanitize filename
-                        $safeFilename = preg_replace("/[^A-Za-z0-9\._-]/", '_', $downloadFilename);
-                        
-                        // Store processed file info for preview
-                        $previewFile = basename($outputFile);
-                        $downloadLink = '/' . $uploadDir . $previewFile; // Make path absolute
-                        
-                        // Delete input file only (keep output for preview)
-                        unlink($inputFile);
-                    } else {
-                        $ffmpegError = $commandOutput ? implode("<br>", array_slice($commandOutput, -10)) : 'No output';
-                        $error = "Processing failed. FFmpeg error: " . htmlspecialchars($ffmpegError);
-                    }
-                } else {
-                    $error = "Failed to move uploaded file";
-                }
-            }
-        }
-    } else {
-        $error = isset($_FILES['audio_file']) ? 
-                 getUploadErrorMessage($_FILES['audio_file']['error']) : 
-                 "Invalid file upload";
-    }
-}
-
-function getUploadErrorMessage($errorCode) {
-    $errors = [
-        UPLOAD_ERR_INI_SIZE => "File too large (server limit)",
-        UPLOAD_ERR_FORM_SIZE => "File too large (form limit)",
-        UPLOAD_ERR_PARTIAL => "Partial upload",
-        UPLOAD_ERR_NO_FILE => "No file uploaded",
-        UPLOAD_ERR_NO_TMP_DIR => "Missing temp folder",
-        UPLOAD_ERR_CANT_WRITE => "Cannot write file",
-        UPLOAD_ERR_EXTENSION => "File upload blocked"
-    ];
-    return $errors[$errorCode] ?? "Unknown upload error (Code: $errorCode)";
-}
-?>
 
 <!DOCTYPE html>
 <html lang="en">
@@ -404,13 +254,11 @@ function getUploadErrorMessage($errorCode) {
         </header>
         
         <div class="content">
-            <?php if (!empty($error)): ?>
-                <div class="error-message show">
-                    <strong>ERROR:</strong> <?= $error ?>
-                </div>
-            <?php endif; ?>
+            <div class="error-message" id="error-message" style="display: none;">
+                <strong>ERROR:</strong> <span id="error-text"></span>
+            </div>
             
-            <form method="POST" enctype="multipart/form-data" id="bitcrusher-form">
+            <form id="bitcrusher-form">
                 <div class="file-upload-container" id="drop-area">
                     <div class="gore-icon">🔊🖻</div>
                     <span class="file-upload-label">SELECT OR DRAG A FILE TO RUIN</span>
@@ -439,7 +287,7 @@ function getUploadErrorMessage($errorCode) {
                 </div>
                 
                 <div class="info-message">
-                    <strong>NOTE:</strong> Max filesize: 50MB. Files are deleted after 5 minutes.
+                    <strong>NOTE:</strong> Nothing is sent to the server. All processing happens in your browser.
                 </div>
                 
                 <button type="submit" class="function-button">
@@ -447,25 +295,38 @@ function getUploadErrorMessage($errorCode) {
                 </button>
             </form>
             
-            <?php if (!empty($previewFile)): ?>
-                <div class="preview-container" style="margin-top: 30px; text-align: center;">
-                    <h3>Preview:</h3>
-                    <?php if ($isImage): ?>
-                        <img src="<?= $downloadLink ?>" alt="Processed Image" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.2);">
-                    <?php else: ?>
-                        <audio controls style="width: 100%;">
-                            <source src="<?= $downloadLink ?>" type="audio/mpeg">
-                            Your browser does not support the audio element.
-                        </audio>
-                    <?php endif; ?>
-                    <p>
-                        <a href="<?= $downloadLink ?>" download="<?= $safeFilename ?>" class="function-button" style="display: inline-block; width: auto; padding: 10px 20px; margin-top: 15px;">
-                            Download
-                        </a>
-                    </p>
+            <div class="preview-container" id="preview-container" style="margin-top: 30px; text-align: center; display: none;">
+                <h3>Preview:</h3>
+                <div id="image-preview" style="display: none;">
+                    <canvas id="processed-image-canvas"></canvas>
+                    <img id="processed-image" alt="Processed Image" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.2);">
                 </div>
-            <?php endif; ?>
+                <div id="audio-preview" style="display: none;">
+                    <audio id="processed-audio" controls style="width: 100%;">
+                        Your browser does not support the audio element.
+                    </audio>
+                </div>
+                <p>
+                    <a id="download-link" class="function-button" style="display: inline-block; width: auto; padding: 10px 20px; margin-top: 15px;">
+                        Download
+                    </a>
+                </p>
+            </div>
         </div>
+    </div>
+<div style="text-align: center; padding: 20px; margin-top: 30px;">
+        <a href="https://ko-fi.com/korosys" target="_blank" 
+           style="display: inline-block; 
+                  background: linear-gradient(135deg, #5e35b1, #d81b60);
+                  color: white;
+                  padding: 12px 24px;
+                  border-radius: 8px;
+                  font-weight: bold;
+                  text-decoration: none;
+                  box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+                  transition: all 0.3s;">
+            DONATE
+        </a>
     </div>
     
     <script>
@@ -521,6 +382,270 @@ function getUploadErrorMessage($errorCode) {
             const dt = e.dataTransfer;
             const files = dt.files;
             fileInput.files = files;
+        }
+
+        // Client-side processing functions
+        const form = document.getElementById('bitcrusher-form');
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const file = fileInput.files[0];
+            if (!file) {
+                showError('Please select a file');
+                return;
+            }
+            
+            const isImage = file.type.startsWith('image/');
+            const isAudio = file.type.startsWith('audio/');
+            
+            if (!isImage && !isAudio) {
+                showError('Invalid file type. Only audio and image files are allowed.');
+                return;
+            }
+            
+            const extremeQuality = qualityInput.value === "1";
+            showProcessing(true);
+            
+            try {
+                if (isImage) {
+                    await processImage(file, extremeQuality);
+                } else {
+                    await processAudio(file, extremeQuality);
+                }
+            } catch (err) {
+                showError(`Processing failed: ${err.message}`);
+                showProcessing(false);
+            }
+        });
+
+        function showError(message) {
+            const errorElement = document.getElementById('error-message');
+            const errorText = document.getElementById('error-text');
+            errorText.textContent = message;
+            errorElement.style.display = 'block';
+            errorElement.classList.add('show');
+        }
+
+        function showProcessing(show) {
+            const button = document.querySelector('.function-button[type="submit"]');
+            if (show) {
+                button.textContent = 'Processing...';
+                button.disabled = true;
+            } else {
+                button.textContent = 'RUIN ME';
+                button.disabled = false;
+            }
+        }
+
+        async function processImage(file, extreme) {
+            const reader = new FileReader();
+            
+            return new Promise((resolve, reject) => {
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        try {
+                            const canvas = document.getElementById('processed-image-canvas');
+                            const ctx = canvas.getContext('2d');
+                            
+                            // Set canvas size to image size
+                            canvas.width = img.width;
+                            canvas.height = img.height;
+                            
+                            // Determine scale factors
+                            const downscaleFactor = extreme ? 32 : 16;
+                            const upscaleFactor = 8;
+                            
+                            // Step 1: Downscale
+                            const smallWidth = Math.max(1, Math.floor(img.width / downscaleFactor));
+                            const smallHeight = Math.max(1, Math.floor(img.height / downscaleFactor));
+                            
+                            // Create temporary canvas for downscaling
+                            const tempCanvas = document.createElement('canvas');
+                            const tempCtx = tempCanvas.getContext('2d');
+                            tempCanvas.width = smallWidth;
+                            tempCanvas.height = smallHeight;
+                            tempCtx.drawImage(img, 0, 0, smallWidth, smallHeight);
+                            
+                            // Clear main canvas
+                            ctx.clearRect(0, 0, canvas.width, canvas.height);
+                            
+                            // Step 2: Upscale with nearest neighbor
+                            ctx.imageSmoothingEnabled = false;
+                            ctx.drawImage(tempCanvas, 0, 0, smallWidth, smallHeight, 0, 0, img.width, img.height);
+                            
+                            // Step 3: Add noise
+                            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                            const data = imageData.data;
+                            const strength = extreme ? 50 : 30;
+                            
+                            for (let i = 0; i < data.length; i += 4) {
+                                const noise = (Math.random() - 0.5) * strength;
+                                data[i] = Math.max(0, Math.min(255, data[i] + noise));     // R
+                                data[i+1] = Math.max(0, Math.min(255, data[i+1] + noise)); // G
+                                data[i+2] = Math.max(0, Math.min(255, data[i+2] + noise)); // B
+                            }
+                            
+                            ctx.putImageData(imageData, 0, 0);
+                            
+                            // Convert to JPEG with low quality
+                            const processedImage = document.getElementById('processed-image');
+                            processedImage.src = canvas.toDataURL('image/jpeg', extreme ? 0.1 : 0.3);
+                            canvas.style.display = 'none';
+                            
+                            // Show preview and download link
+                            document.getElementById('image-preview').style.display = 'block';
+                            document.getElementById('audio-preview').style.display = 'none';
+                            document.getElementById('preview-container').style.display = 'block';
+                            
+                            const downloadLink = document.getElementById('download-link');
+                            downloadLink.href = processedImage.src;
+                            downloadLink.download = `bitcrushed_${extreme ? 'extreme' : 'standard'}.jpg`;
+                            
+                            showProcessing(false);
+                            resolve();
+                        } catch (err) {
+                            reject(err);
+                        }
+                    };
+                    img.src = e.target.result;
+                };
+                reader.onerror = (e) => reject(new Error('Failed to read image file'));
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async function processAudio(file, extreme) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const arrayBuffer = await file.arrayBuffer();
+            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+            
+            // Create offline context for processing
+            const newSampleRate = extreme ? 8000 : 12000;
+            const numberOfFrames = Math.ceil(audioBuffer.duration * newSampleRate);
+            
+            const offlineContext = new OfflineAudioContext(
+                audioBuffer.numberOfChannels,
+                numberOfFrames,
+                newSampleRate
+            );
+            
+            // Create audio source
+            const source = offlineContext.createBufferSource();
+            source.buffer = audioBuffer;
+            
+            // Apply processing effects
+            if (extreme) {
+                // Extreme processing chain (phaser and delay removed)
+                const splitter = offlineContext.createChannelSplitter(2);
+                const merger = offlineContext.createChannelMerger(2);
+                
+                // Create effects for each channel
+                const createExtremeChain = (channel) => {
+                    const filter = offlineContext.createBiquadFilter();
+                    filter.type = 'bandpass';
+                    filter.frequency.value = 1500;
+                    
+                    const inputGain = offlineContext.createGain();
+                    inputGain.gain.value = 1.0;
+                    
+                    const outputGain = offlineContext.createGain();
+                    outputGain.gain.value = 1.2;
+                    
+                    // Connect input directly to output (bypass removed effects)
+                    inputGain.connect(outputGain);
+                    
+                    return { inputGain, outputGain, filter };
+                };
+                
+                // Left channel processing
+                const leftChain = createExtremeChain('left');
+                source.connect(leftChain.inputGain);
+                leftChain.outputGain.connect(merger, 0, 0);
+                
+                // Right channel processing
+                const rightChain = createExtremeChain('right');
+                source.connect(rightChain.inputGain);
+                rightChain.outputGain.connect(merger, 0, 1);
+                
+                // Connect to output
+                merger.connect(offlineContext.destination);
+            } else {
+                // Standard processing - simple downsampling
+                source.connect(offlineContext.destination);
+            }
+            
+            // Start processing
+            source.start();
+            const processedBuffer = await offlineContext.startRendering();
+            
+            // Create WAV blob
+            const wavBlob = bufferToWav(processedBuffer);
+            const url = URL.createObjectURL(wavBlob);
+            
+            // Show preview and download link
+            const audioPlayer = document.getElementById('processed-audio');
+            audioPlayer.src = url;
+            
+            document.getElementById('image-preview').style.display = 'none';
+            document.getElementById('audio-preview').style.display = 'block';
+            document.getElementById('preview-container').style.display = 'block';
+            
+            const downloadLink = document.getElementById('download-link');
+            downloadLink.href = url;
+            downloadLink.download = `bitcrushed_${extreme ? 'extreme' : 'standard'}.wav`;
+            
+            showProcessing(false);
+        }
+
+        function bufferToWav(buffer) {
+            const numChannels = buffer.numberOfChannels;
+            const sampleRate = buffer.sampleRate;
+            const format = 1; // PCM
+            const bitDepth = 16;
+            
+            const bytesPerSample = bitDepth / 8;
+            const blockAlign = numChannels * bytesPerSample;
+            
+            const dataChunkSize = buffer.length * blockAlign;
+            const bufferSize = 44 + dataChunkSize;
+            
+            const arrayBuffer = new ArrayBuffer(bufferSize);
+            const view = new DataView(arrayBuffer);
+            
+            // Write WAV header
+            writeString(view, 0, 'RIFF');
+            view.setUint32(4, 36 + dataChunkSize, true);
+            writeString(view, 8, 'WAVE');
+            writeString(view, 12, 'fmt ');
+            view.setUint32(16, 16, true); // fmt chunk size
+            view.setUint16(20, format, true);
+            view.setUint16(22, numChannels, true);
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * blockAlign, true); // byte rate
+            view.setUint16(32, blockAlign, true);
+            view.setUint16(34, bitDepth, true);
+            writeString(view, 36, 'data');
+            view.setUint32(40, dataChunkSize, true);
+            
+            // Write audio data
+            let offset = 44;
+            for (let i = 0; i < buffer.length; i++) {
+                for (let channel = 0; channel < numChannels; channel++) {
+                    const sample = Math.max(-1, Math.min(1, buffer.getChannelData(channel)[i]));
+                    const int16 = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+                    view.setInt16(offset, int16, true);
+                    offset += 2;
+                }
+            }
+            
+            return new Blob([view], { type: 'audio/wav' });
+        }
+
+        function writeString(view, offset, string) {
+            for (let i = 0; i < string.length; i++) {
+                view.setUint8(offset + i, string.charCodeAt(i));
+            }
         }
     </script>
 </body>
