@@ -2,8 +2,13 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<meta property="og:title" content="Ruin.Media">
+    <meta property="og:description" content="Making the internet worse, one file at a time.">
+    <meta property="og:image" content="https://ruin.media/favicon.ico">
+    <meta name="twitter:card" content="summary_large_image">
     <meta charset="UTF-8">
-    <title>Ruin.Media</title>
+<link rel="icon" href="favicon.ico" type="image/x-icon">
+    <title>RUIN.MEDIA</title>
     <style>
         :root {
             --primary: #5e35b1;

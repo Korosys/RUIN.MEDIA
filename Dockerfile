@@ -11,6 +11,7 @@ COPY docker/supervisor.conf /etc/supervisor/conf.d/supervisor.conf
 COPY docker/nginx-main.conf /etc/nginx/nginx.conf
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY app/index.php /var/www/html/
+COPY app/favicon.ico /var/www/html/
 EXPOSE 80
 # Start supervisor which will manage both nginx and our cleanup process
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisor.conf"]
