@@ -1,8 +1,8 @@
-version: '3.8'
-
+---
 services:
   ruin.media:
+    image: korosys/ruin.media:latest
     container_name: "ruin.media"
-    build: .
     ports:
       - "8080:80"
+    restart: unless-stopped
