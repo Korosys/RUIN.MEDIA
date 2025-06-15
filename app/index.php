@@ -292,7 +292,7 @@
                 </div>
                 
                 <div class="info-message">
-                    <strong>NOTE:</strong> Nothing is sent to the server. All processing happens in your browser.
+                    <strong>NOTE:</strong> Files are not sent to the server. All processing happens in your browser.
                 </div>
                 
                 <button type="submit" class="function-button">
